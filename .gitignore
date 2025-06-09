@@ -1,0 +1,3 @@
+# Ignore venv folder (it takes a long time )
+/venv/
+/data/
