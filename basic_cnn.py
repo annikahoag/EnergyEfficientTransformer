@@ -2,7 +2,8 @@
 #   1. Create a GitHub repo and clean up code (DONE)
 #   2. Add in GPU tracking (DONE)
 #   3. Add database collection properly so it's saving literally everything from the config file as well as param count and GPU and accuracy (DONE)
-#   4. Start actually finding good models 
+#   4. Make script for graphing model (DONE)
+#   5. Start actually finding good models 
 
 
 
@@ -63,8 +64,8 @@ FINAL_SPATIAL_DIM = IM_HEIGHT_WIDTH // (POOL_KERNEL ** NUM_CONV)
 OUTPUT_FILE_PER_EPOCH = 'power_output_per_epoch.csv' #So we can see how much each epoch used
 OUTPUT_FILE_TOTAL = 'total_power.csv' #So we can see how much the entire training used 
 COMMAND = ["nvidia-smi", "dmon", "-s", "p", "--format", "csv"]
-DB_NAME = str(MODEL_NAME + '_results')
-ALL_DB_NAME = 'final_results'
+DB_NAME = str(MODEL_NAME + '_results.db')
+ALL_DB_NAME = 'final_results.db'
 
 print()
 
@@ -131,8 +132,9 @@ def create_db(name):
 
     # The DB that contains one row per model with all parameters listed and the wattage used for the entire training
     if name==ALL_DB_NAME:
+        print("name: ", name)
         c.execute("""
-            CREATE TABLE IF NOT EXISTS name (
+            CREATE TABLE IF NOT EXISTS results (
                 id INTEGER PRIMARY KEY,
                 model_name STRING, 
                 num_classes INTEGER, 
@@ -171,7 +173,7 @@ def create_db(name):
     # The other DB just keeps track of each epochs' accuracy, etc. 
     else:
          c.execute("""
-            CREATE TABLE IF NOT EXISTS name (
+            CREATE TABLE IF NOT EXISTS results (
                 epoch INTEGER PRIMARY KEY,
                 model_name STRING, 
                 num_params INTEGER,
@@ -208,84 +210,83 @@ def get_power(filename):
 
 
 # Append given data to our database 
-# TODO: Same as create_db() 
 def add_to_db(name, epoch, num_params, accuracy, total_wattage, avg_wattage):
     conn = sqlite3.connect(name)
     c = conn.cursor()
 
     if name==ALL_DB_NAME:
         c.execute('''
-        INSERT OR REPLACE INTO name(
-            model_name, 
-            num_classes, 
-            conv_channels, 
-            kernel_size, 
-            pool_kernel, 
-            use_batchnorm, 
-            activation_function, 
-            pooling, 
-            norm_type, 
-            output_size, 
-            dataset, 
-            random_crop, 
-            horizontal_flip,
-            batch_size_train, 
-            num_epochs,
-            learning_rate,
-            weight_decay,
-            num_workers,
-            shuffle_train, 
-            optimizer, 
-            batch_size_test,
-            shuffle_test,
-            im_height_width,
-            num_conv_layer,
-            padding,
-            final_spatial_dim,
-            num_params,
-            accuracy,
-            total_wattage,
-            avg_wattage,
-            config_file
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-            MODEL_NAME, 
-            NUM_CLASSES, 
-            str(CONV_CHANNELS), 
-            KERNEL_SIZE, 
-            POOL_KERNEL, 
-            USE_BATCHNORM, 
-            ACTIVATION_FUNCTION, 
-            POOL_FUNC, 
-            NORM_TYPE_LPPOOL, 
-            OUTPUT_SIZE, 
-            DATASET, 
-            RANDOM_CROP, 
-            HORIZONTAL_FLIP, 
-            BATCH_SIZE_TRAIN,
-            NUM_EPOCHS,
-            LEARNING_RATE,
-            WEIGHT_DECAY,
-            NUM_WORKERS,
-            SHUFFLE_TRAIN,
-            OPTIMIZER,
-            BATCH_SIZE_TEST,
-            SHUFFLE_TEST,
-            IM_HEIGHT_WIDTH, 
-            NUM_CONV,
-            PADDING,
-            FINAL_SPATIAL_DIM,
-            num_params,
-            accuracy,
-            total_wattage,
-            avg_wattage,
-            CONFIG_FILE
-        ))
+            INSERT OR REPLACE INTO results(
+                model_name, 
+                num_classes, 
+                conv_channels, 
+                kernel_size, 
+                pool_kernel, 
+                use_batchnorm, 
+                activation_function, 
+                pooling, 
+                norm_type, 
+                output_size, 
+                dataset, 
+                random_crop, 
+                horizontal_flip,
+                batch_size_train, 
+                num_epochs,
+                learning_rate,
+                weight_decay,
+                num_workers,
+                shuffle_train, 
+                optimizer, 
+                batch_size_test,
+                shuffle_test,
+                im_height_width,
+                num_conv_layer,
+                padding,
+                final_spatial_dim,
+                num_params,
+                accuracy,
+                total_wattage,
+                avg_wattage,
+                config_file
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+                MODEL_NAME, 
+                NUM_CLASSES, 
+                str(CONV_CHANNELS), 
+                KERNEL_SIZE, 
+                POOL_KERNEL, 
+                USE_BATCHNORM, 
+                ACTIVATION_FUNCTION, 
+                POOL_FUNC, 
+                NORM_TYPE_LPPOOL, 
+                OUTPUT_SIZE, 
+                DATASET, 
+                RANDOM_CROP, 
+                HORIZONTAL_FLIP, 
+                BATCH_SIZE_TRAIN,
+                NUM_EPOCHS,
+                LEARNING_RATE,
+                WEIGHT_DECAY,
+                NUM_WORKERS,
+                SHUFFLE_TRAIN,
+                OPTIMIZER,
+                BATCH_SIZE_TEST,
+                SHUFFLE_TEST,
+                IM_HEIGHT_WIDTH, 
+                NUM_CONV,
+                PADDING,
+                FINAL_SPATIAL_DIM,
+                num_params,
+                accuracy,
+                total_wattage,
+                avg_wattage,
+                CONFIG_FILE
+            ))
 
     else:
         c.execute('''
-            INSERT OR REPLACE INTO name(
+            INSERT OR REPLACE INTO results(
                 epoch, 
                 model_name,
                 num_params,
