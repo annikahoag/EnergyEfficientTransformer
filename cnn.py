@@ -20,10 +20,10 @@ import sqlite3
 import subprocess 
 import csv
 
-
+# LEFT OFF: getting errors on 6-layer which means I will have to redo the 2 layer
 
 # Read in YAML config file and set up global variables 
-CONFIG_FILE = "template.yaml"
+CONFIG_FILE = "model2.yaml"
 CONFIG_PATH = str("Handcrafted_NNs/" + CONFIG_FILE)
 with open(CONFIG_PATH, "r") as f:
     cfg = yaml.safe_load(f)
@@ -81,7 +81,7 @@ class CNN(nn.Module):
         self.convs = nn.ModuleList()
         self.batches = nn.ModuleList()
         for i in range(NUM_CONV):
-            self.convs.append(nn.Conv2d(CONV_CHANNELS[i], CONV_CHANNELS[i+1], KERNEL_SIZE, PADDING))
+            self.convs.append(nn.Conv2d(CONV_CHANNELS[i], CONV_CHANNELS[i+1], KERNEL_SIZE, stride=1, padding=PADDING))
             if USE_BATCHNORM:
                 self.batches.append(nn.BatchNorm2d(CONV_CHANNELS[i+1])) 
 
@@ -103,7 +103,7 @@ class CNN(nn.Module):
 
         # Apply linear transformation 
         # TODO: include bias parameter as an option?     
-        self.fc = nn.Linear(CONV_CHANNELS[NUM_CONV]*FINAL_SPATIAL_DIM, NUM_CLASSES)
+        self.fc = nn.Linear(CONV_CHANNELS[NUM_CONV]*FINAL_SPATIAL_DIM*FINAL_SPATIAL_DIM, NUM_CLASSES)
 
 
 
