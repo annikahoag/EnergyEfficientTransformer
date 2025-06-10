@@ -1,6 +1,6 @@
 # NEXT STEPS -->
 #   1. Create a GitHub repo and clean up code (DONE)
-#   2. Add in GPU tracking 
+#   2. Add in GPU tracking (DONE)
 #   3. Add database collection properly so it's saving literally everything from the config file as well as param count and GPU and accuracy
 #   4. Start actually finding good models 
 
@@ -16,12 +16,18 @@ import torch.optim as optim
 import yaml
 import os
 import sqlite3
+import subprocess 
+import csv
+
 
 
 # Read in YAML config file and set up global variables 
-with open("Handcrafted_NNs/template.yaml", "r") as f:
+CONFIG_FILE = "template.yaml"
+CONFIG_PATH = str("Handcrafted_NNs/" + CONFIG_FILE)
+with open(CONFIG_PATH, "r") as f:
     cfg = yaml.safe_load(f)
 
+MODEL_NAME = cfg["model"]["name"]
 NUM_CLASSES = cfg["model"]["params"]["num_classes"]
 CONV_CHANNELS = cfg["model"]["params"]["conv_channels"] #Formatted as [original input channel, layer1 output channel/layer2 input channel, layer2 output channel/layer3 input channel....]
 KERNEL_SIZE = cfg["model"]["params"]["kernel_size"]
@@ -51,6 +57,15 @@ IM_HEIGHT_WIDTH = cfg["image"]["im_height_width"]
 NUM_CONV = len(CONV_CHANNELS)-1
 PADDING = KERNEL_SIZE//2
 FINAL_SPATIAL_DIM = IM_HEIGHT_WIDTH // (POOL_KERNEL ** NUM_CONV)
+
+
+# Output file for GPU readings and command to run during subprocess
+OUTPUT_FILE_PER_EPOCH = 'power_output_per_epoch.csv' #So we can see how much each epoch used
+OUTPUT_FILE_TOTAL = 'total_power.csv' #So we can see how much the entire training used 
+COMMAND = ["nvidia-smi", "dmon", "-s", "p", "--format", "csv"]
+DB_NAME = str(MODEL_NAME + '_results')
+ALL_DB_NAME = 'final_results'
+
 print()
 
 
@@ -61,7 +76,7 @@ class CNN(nn.Module):
         super().__init__()
 
 
-        # Set up modules lists for convolutional and batch layers for in between each if needed 
+        # Set up modules lists for convolutional layers and batch norm for in between each if needed 
         self.convs = nn.ModuleList()
         self.batches = nn.ModuleList()
         for i in range(NUM_CONV):
@@ -110,52 +125,198 @@ class CNN(nn.Module):
 
 
 # Creates SQLite database and table
-# TODO: Have to make this actually be what we want to put into database, right now it's a placeholder ish
-def create_db():
-    conn = sqlite3.connect('model_results')
+def create_db(name):
+    conn = sqlite3.connect(name)
     c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS model_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            model_name STRING, 
-            param_count INTEGER,
-            gpu_history BLOB,
-            accuracy REAL,
-            validation REAL,
-            linear_layer_count INTEGER,
-            conv_count INTEGER,
-            architecture BLOB,
-            batch_size INTEGER,
-            optimizer STRING,
-            dataset STRING,
-            config_file BLOB
-        )
-    """)
+
+    # The DB that contains one row per model with all parameters listed and the wattage used for the entire training
+    if name==ALL_DB_NAME:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS name (
+                id INTEGER PRIMARY KEY,
+                model_name STRING, 
+                num_classes INTEGER, 
+                conv_channels TEXT, 
+                kernel_size INTEGER,
+                pool_kernel INTEGER, 
+                use_batchnorm INTEGER,
+                activation_function STRING,
+                pooling STRING,
+                norm_type INTEGER, 
+                output_size INTEGER,
+                dataset STRING,
+                random_crop INTEGER,
+                horizontal_flip INTEGER, 
+                batch_size_train INTEGER,
+                num_epochs INTEGER,
+                learning_rate REAL,
+                weight_decay REAL,
+                num_workers INT,
+                shuffle_train INTEGER,
+                optimizer STRING,
+                batch_size_test INTEGER,
+                shuffle_test INTEGER,
+                im_height_width INTEGER,
+                num_conv_layer INTEGER,
+                padding INTEGER,
+                final_spatial_dim INTEGER,
+                num_params INTEGER,
+                accuracy REAL,
+                total_wattage REAL, 
+                avg_wattage REAL,
+                config_file BLOB
+            )
+        """)
+    
+    # The other DB just keeps track of each epochs' accuracy, etc. 
+    else:
+         c.execute("""
+            CREATE TABLE IF NOT EXISTS name (
+                epoch INTEGER PRIMARY KEY,
+                model_name STRING, 
+                num_params INTEGER,
+                accuracy REAL,
+                total_wattage REAL, 
+                avg_wattage REAL,
+                config_file BLOB
+            )
+        """)
     conn.commit()
     conn.close()
 
 
 
+# Function to read CSV file with wattage readings, return total and average wattage used at this point 
+def get_power(filename):
+    with open(filename, 'r') as f:
+        reader = list(csv.reader(f, delimiter=','))
+        num_iters = len(reader)
+
+    total = 0
+    num_skips = 0
+
+    for i in range(num_iters):
+        if reader[i][0] != '#gpu' and reader[i][0] != '#Idx':
+            total = total + float(reader[i][1])
+        else:
+            num_skips += 1
+    
+    avg = total / (num_iters-num_skips)
+    
+    return total, avg
+
+
+
 # Append given data to our database 
 # TODO: Same as create_db() 
-def add_to_db(id, model_num, param_count, gpu_history, accuracy, validation, linear_layer_count, conv_count, architecture, batch_size, optimizer, datatset, config_file):
-    conn = sqlite3.connect('results')
+def add_to_db(name, epoch, num_params, accuracy, total_wattage, avg_wattage):
+    conn = sqlite3.connect(name)
     c = conn.cursor()
 
-    c.execute('''
-        INSERT OR REPLACE INTO results(id, model_name, param_count, gpu_history, accuracy, validation, linear_layer_count, conv_count, architecture, batch_size, optimizer, dataset, config_file)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (id, model_num, param_count, gpu_history, accuracy, validation, linear_layer_count, conv_count, architecture, batch_size, optimizer, dataset, config_file))
+    if name==ALL_DB_NAME:
+        c.execute('''
+        INSERT OR REPLACE INTO name(
+            model_name, 
+            num_classes, 
+            conv_channels, 
+            kernel_size, 
+            pool_kernel, 
+            use_batchnorm, 
+            activation_function, 
+            pooling, 
+            norm_type, 
+            output_size, 
+            dataset, 
+            random_crop, 
+            horizontal_flip,
+            batch_size_train, 
+            num_epochs,
+            learning_rate,
+            weight_decay,
+            num_workers,
+            shuffle_train, 
+            optimizer, 
+            batch_size_test,
+            shuffle_test,
+            im_height_width,
+            num_conv_layer,
+            padding,
+            final_spatial_dim,
+            num_params,
+            accuracy,
+            total_wattage,
+            avg_wattage,
+            config_file
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+            MODEL_NAME, 
+            NUM_CLASSES, 
+            str(CONV_CHANNELS), 
+            KERNEL_SIZE, 
+            POOL_KERNEL, 
+            USE_BATCHNORM, 
+            ACTIVATION_FUNCTION, 
+            POOL_FUNC, 
+            NORM_TYPE_LPPOOL, 
+            OUTPUT_SIZE, 
+            DATASET, 
+            RANDOM_CROP, 
+            HORIZONTAL_FLIP, 
+            BATCH_SIZE_TRAIN,
+            NUM_EPOCHS,
+            LEARNING_RATE,
+            WEIGHT_DECAY,
+            NUM_WORKERS,
+            SHUFFLE_TRAIN,
+            OPTIMIZER,
+            BATCH_SIZE_TEST,
+            SHUFFLE_TEST,
+            IM_HEIGHT_WIDTH, 
+            NUM_CONV,
+            PADDING,
+            FINAL_SPATIAL_DIM,
+            num_params,
+            accuracy,
+            total_wattage,
+            avg_wattage,
+            CONFIG_FILE
+        ))
+
+    else:
+        c.execute('''
+            INSERT OR REPLACE INTO name(
+                epoch, 
+                model_name,
+                num_params,
+                accuracy,
+                total_wattage,
+                avg_wattage,
+                config_file
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+        ''', (
+                epoch,
+                MODEL_NAME, 
+                num_params,
+                accuracy,
+                total_wattage,
+                avg_wattage,
+                CONFIG_FILE
+            ))
     
     conn.commit()
     conn.close()
 
 
 
+
 def main():
     # Only do this one time, creating SQLite database
-    if not os.path.exists('results.db'):
-        create_db()
+    if not os.path.exists(DB_NAME):
+        create_db(DB_NAME)
+    if not os.path.exists(ALL_DB_NAME):
+        create_db(ALL_DB_NAME)
 
 
     # Setting up data
@@ -190,17 +351,37 @@ def main():
 
 
     # Device set-up
-    # TODO: Have to add in GPU usage tracking 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda")
+    print("Device ", device)
     model = CNN().to(device)
 
     # Loss and optimizer set up
     criterion = nn.CrossEntropyLoss() #For multi-class classification
-    optimizer =getattr(torch.optim, OPTIMIZER)(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    optimizer = getattr(torch.optim, OPTIMIZER)(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 
+
+    # Start process that will track the wattage for the entire training
+    f1 = open(OUTPUT_FILE_TOTAL, "a")
+    proc1 = subprocess.Popen(
+        COMMAND,
+        stdout = f1,
+        stderr = subprocess.STDOUT,
+        start_new_session = True, 
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    )
 
     # Train model
     for epoch in range(NUM_EPOCHS):
+        # Start GPU tracking subprocess for the specific epoch we're on 
+        f2 = open(OUTPUT_FILE_PER_EPOCH, "a")
+        proc2 = subprocess.Popen(
+            COMMAND,
+            stdout = f2,
+            stderr = subprocess.STDOUT,
+            start_new_session = True, 
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
+
         model.train()
         running_loss = 0.0
 
@@ -227,6 +408,17 @@ def main():
                 running_loss = 0.0
         
 
+        # Before testing save power, kill subprocess for this epoch, and close the output file so we can write to it again 
+        total_power, avg_power = get_power(OUTPUT_FILE_PER_EPOCH)
+        proc2.terminate()
+        try:
+            proc2.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc2.kill()
+            proc2.wait()
+        f2.close()
+        os.remove(OUTPUT_FILE_PER_EPOCH)
+
         # Evaluate performance after each epoch
         model.eval()
         correct = 0
@@ -243,7 +435,24 @@ def main():
         print(f"Epoch {epoch+1} Test Accuracy: {acc:.2f}%")
 
         param_count = sum(p.numel() for p in model.parameters())
-        print(f"Total params: {param_count}\n")
+        print(f"Total params: {param_count}")
+
+        print(f"Total GPU usage: {total_power}\n")
+
+        add_to_db(DB_NAME, epoch+1, param_count, acc, total_power, avg_power)
+
+
+    # Save results for fully trained model
+    total_power, avg_power = get_power(OUTPUT_FILE_TOTAL)
+    proc1.terminate()
+    try:
+        proc1.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc1.kill()
+        proc1.wait()
+    f1.close()
+    os.remove(OUTPUT_FILE_TOTAL)
+    add_to_db(ALL_DB_NAME, NUM_EPOCHS, param_count, acc, total_power, avg_power)
 
 
 

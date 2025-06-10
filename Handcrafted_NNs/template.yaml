@@ -1,7 +1,7 @@
 id: template
 
 model:
-  name: List of Some Parameters
+  name: example
   params:
     num_classes: 10
     conv_channels: [3, 32, 64, 128]
