@@ -1,7 +1,7 @@
 # NEXT STEPS -->
 #   1. Create a GitHub repo and clean up code (DONE)
 #   2. Add in GPU tracking (DONE)
-#   3. Add database collection properly so it's saving literally everything from the config file as well as param count and GPU and accuracy
+#   3. Add database collection properly so it's saving literally everything from the config file as well as param count and GPU and accuracy (DONE)
 #   4. Start actually finding good models 
 
 
