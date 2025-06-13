@@ -1,10 +1,11 @@
 id: model1
 
 model:
-  name: 2layer
+  name: 3cnnlayer_6fclayer
   params:
     num_classes: 10
-    conv_channels: [3, 32, 64]
+    conv_channels: [3, 32, 64, 128]
+    fully_connected_layers: [128, 128, 128, 128, 128]
     kernel_size: 3
     pool_kernel: 2
     use_batchnorm: True

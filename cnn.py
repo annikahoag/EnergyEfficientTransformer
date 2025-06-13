@@ -19,11 +19,12 @@ import os
 import sqlite3
 import subprocess 
 import csv
+from torch.utils.data import random_split
 
-# LEFT OFF: getting errors on 6-layer which means I will have to redo the 2 layer
+
 
 # Read in YAML config file and set up global variables 
-CONFIG_FILE = "model2.yaml"
+CONFIG_FILE = "model3_33256.yaml"
 CONFIG_PATH = str("Handcrafted_NNs/" + CONFIG_FILE)
 with open(CONFIG_PATH, "r") as f:
     cfg = yaml.safe_load(f)
@@ -31,6 +32,7 @@ with open(CONFIG_PATH, "r") as f:
 MODEL_NAME = cfg["model"]["name"]
 NUM_CLASSES = cfg["model"]["params"]["num_classes"]
 CONV_CHANNELS = cfg["model"]["params"]["conv_channels"] #Formatted as [original input channel, layer1 output channel/layer2 input channel, layer2 output channel/layer3 input channel....]
+FC_LAYERS = cfg["model"]["params"]["fully_connected_layers"] # Formatted same as above except we have to put the 1st and last values in 
 KERNEL_SIZE = cfg["model"]["params"]["kernel_size"]
 POOL_KERNEL = cfg["model"]['params']['pool_kernel'] #max pooling kernel is POOL_KERNELxPOOL_KERNEL
 USE_BATCHNORM = cfg["model"]["params"]["use_batchnorm"]
@@ -58,6 +60,12 @@ IM_HEIGHT_WIDTH = cfg["image"]["im_height_width"]
 NUM_CONV = len(CONV_CHANNELS)-1
 PADDING = KERNEL_SIZE//2
 FINAL_SPATIAL_DIM = IM_HEIGHT_WIDTH // (POOL_KERNEL ** NUM_CONV)
+# print(FINAL_SPATIAL_DIM)
+# print(FC_LAYERS)
+FC_LAYERS.insert(0, CONV_CHANNELS[NUM_CONV]*FINAL_SPATIAL_DIM*FINAL_SPATIAL_DIM)
+# print(FC_LAYERS)
+FC_LAYERS.append(NUM_CLASSES)
+NUM_FC = len(FC_LAYERS)-1
 
 
 # Output file for GPU readings and command to run during subprocess
@@ -67,6 +75,13 @@ COMMAND = ["nvidia-smi", "dmon", "-s", "p", "--format", "csv"]
 DB_NAME = str(MODEL_NAME + '_results.db')
 ALL_DB_NAME = 'final_results.db'
 
+# print(IM_HEIGHT_WIDTH)
+# print(POOL_KERNEL)
+# print(NUM_CONV)
+# print(FINAL_SPATIAL_DIM)
+# print(NUM_CLASSES)
+# print(CONV_CHANNELS[NUM_CONV]*FINAL_SPATIAL_DIM*FINAL_SPATIAL_DIM)
+# print(FC_LAYERS)
 print()
 
 
@@ -101,28 +116,36 @@ class CNN(nn.Module):
             self.pool = PoolClass(OUTPUT_SIZE)
         
 
-        # Apply linear transformation 
-        # TODO: include bias parameter as an option?     
-        self.fc = nn.Linear(CONV_CHANNELS[NUM_CONV]*FINAL_SPATIAL_DIM*FINAL_SPATIAL_DIM, NUM_CLASSES)
+        # Fully connected NN layers 
+        self.fc_layers = nn.ModuleList()
+        for i in range(NUM_FC):
+            self.fc_layers.append(nn.Linear(FC_LAYERS[i], FC_LAYERS[i+1]))
 
 
 
     # Function for forward pass through our CNN
     def forward(self, x):
-        
+        # print(len(self.convs))
+        # print(NUM_CONV)
         # Call each convolutional layer from init, apply batch norm if needed, apply activation function and pooling
         for i in range(NUM_CONV):
             x = self.convs[i](x)
             if USE_BATCHNORM:
                 x = self.batches[i](x)
             x = self.act(x)
+            # print("shape: ", x.size(0))
             x = self.pool(x)
 
         # Flatten        
         x = x.view(x.size(0), -1) 
+        # print("shape: ", x.size(0))
 
-        return self.fc(x) 
-
+        # Fully connected NN layers 
+        # x = self.fc(x) 
+        for i in range(NUM_FC):
+            x = self.fc_layers[i](x)
+        
+        return x 
 
 
 # Creates SQLite database and table
@@ -163,7 +186,8 @@ def create_db(name):
                 padding INTEGER,
                 final_spatial_dim INTEGER,
                 num_params INTEGER,
-                accuracy REAL,
+                test_accuracy REAL,
+                val_accuracy REAL, 
                 total_wattage REAL, 
                 avg_wattage REAL,
                 config_file BLOB
@@ -177,7 +201,7 @@ def create_db(name):
                 epoch INTEGER PRIMARY KEY,
                 model_name STRING, 
                 num_params INTEGER,
-                accuracy REAL,
+                test_accuracy REAL,
                 total_wattage REAL, 
                 avg_wattage REAL,
                 config_file BLOB
@@ -210,7 +234,7 @@ def get_power(filename):
 
 
 # Append given data to our database 
-def add_to_db(name, epoch, num_params, accuracy, total_wattage, avg_wattage):
+def add_to_db(name, epoch, num_params, test_accuracy, val_accuracy, total_wattage, avg_wattage):
     conn = sqlite3.connect(name)
     c = conn.cursor()
 
@@ -244,12 +268,13 @@ def add_to_db(name, epoch, num_params, accuracy, total_wattage, avg_wattage):
                 padding,
                 final_spatial_dim,
                 num_params,
-                accuracy,
+                test_accuracy,
+                val_accuracy,
                 total_wattage,
                 avg_wattage,
                 config_file
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
                 MODEL_NAME, 
                 NUM_CLASSES, 
@@ -278,7 +303,8 @@ def add_to_db(name, epoch, num_params, accuracy, total_wattage, avg_wattage):
                 PADDING,
                 FINAL_SPATIAL_DIM,
                 num_params,
-                accuracy,
+                test_accuracy,
+                val_accuracy,
                 total_wattage,
                 avg_wattage,
                 CONFIG_FILE
@@ -290,7 +316,7 @@ def add_to_db(name, epoch, num_params, accuracy, total_wattage, avg_wattage):
                 epoch, 
                 model_name,
                 num_params,
-                accuracy,
+                test_accuracy,
                 total_wattage,
                 avg_wattage,
                 config_file
@@ -300,7 +326,7 @@ def add_to_db(name, epoch, num_params, accuracy, total_wattage, avg_wattage):
                 epoch,
                 MODEL_NAME, 
                 num_params,
-                accuracy,
+                test_accuracy,
                 total_wattage,
                 avg_wattage,
                 CONFIG_FILE
@@ -325,6 +351,7 @@ def main():
     # Defining transforms to be used for training and testing 
     # Data augmentation, converting to Tensor, normalization 
     transform_list = []
+    transform_list.append(transforms.Resize(IM_HEIGHT_WIDTH)) 
     if HORIZONTAL_FLIP:
         transform_list.append(transforms.RandomHorizontalFlip())
     if RANDOM_CROP:
@@ -339,15 +366,19 @@ def main():
     DatasetClass = getattr(dsets, DATASET, None)
     trainset = DatasetClass(root=".\data", train=True, download=True, transform=transform_train)
     testset = DatasetClass(root=".\data", train=False, download=True, transform=transform_test)
+    train_size = int(0.9*len(trainset)) #Using 10% of training data to create a validation set of data that we've never seen, now 45K
+    val_size = len(trainset) - train_size #Create validation set of 5K
+    trainset, valset = random_split(trainset, [train_size, val_size])
 
 
     # Wrap in DataLoader, used for batching and shuffling
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE_TRAIN, shuffle=SHUFFLE_TRAIN, num_workers=NUM_WORKERS)
     testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE_TEST, shuffle=SHUFFLE_TEST, num_workers=NUM_WORKERS)
+    valloader = torch.utils.data.DataLoader(valset, batch_size=BATCH_SIZE_TRAIN, shuffle=SHUFFLE_TRAIN, num_workers=NUM_WORKERS)
 
 
     # Get image class names
-    classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+    # classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 
 
@@ -432,19 +463,37 @@ def main():
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
         
-        acc = 100 * correct / total
-        print(f"Epoch {epoch+1} Test Accuracy: {acc:.2f}%")
+        test_acc = 100 * correct / total
+        print(f"Epoch {epoch+1} Test Accuracy: {test_acc:.2f}%")
 
         param_count = sum(p.numel() for p in model.parameters())
         print(f"Total params: {param_count}")
 
         print(f"Total GPU usage: {total_power}\n")
 
-        add_to_db(DB_NAME, epoch+1, param_count, acc, total_power, avg_power)
+        add_to_db(DB_NAME, epoch+1, param_count, test_acc, None, total_power, avg_power)
 
+
+    # Evaluate performance on validation set
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for inputs, labels in valloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    
+    val_acc = 100 * correct / total
+    print(f"Final Validation Accuracy: {val_acc:.2f}%")
 
     # Save results for fully trained model
+    param_count = sum(p.numel() for p in model.parameters())
+    print(f"Total params: {param_count}")
     total_power, avg_power = get_power(OUTPUT_FILE_TOTAL)
+    print(f"Total GPU usage: {total_power}\n")
     proc1.terminate()
     try:
         proc1.wait(timeout=3)
@@ -453,7 +502,7 @@ def main():
         proc1.wait()
     f1.close()
     os.remove(OUTPUT_FILE_TOTAL)
-    add_to_db(ALL_DB_NAME, NUM_EPOCHS, param_count, acc, total_power, avg_power)
+    add_to_db(ALL_DB_NAME, NUM_EPOCHS, param_count, test_acc, val_acc, total_power, avg_power)
 
 
 
