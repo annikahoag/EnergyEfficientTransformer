@@ -25,7 +25,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 #LEFT OFF: keep runnning the models you already have untuil you have 10 of each and then you can avaerage  
 # Read in YAML config file and set up global variables 
-CONFIG_FILE = "model3_512.yaml"
+CONFIG_FILE = "model5_2048.yaml"
 CONFIG_PATH = str("Handcrafted_NNs/" + CONFIG_FILE)
 with open(CONFIG_PATH, "r") as f:
     cfg = yaml.safe_load(f)
